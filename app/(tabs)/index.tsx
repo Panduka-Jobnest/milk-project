@@ -1,6 +1,6 @@
 // app/(tabs)/index.tsx
 import { useState, useEffect } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Pressable, Linking } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import {
   collection,
@@ -14,6 +14,9 @@ import { db, auth } from '@/lib/firebase';
 
 export default function DashboardScreen() {
   const [temperature, setTemperature] = useState<number | null>(null);
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [speed, setSpeed] = useState<number | null>(null);
   const [deviceId, setDeviceId] = useState('—');
   const [lastUpdated, setLastUpdated] = useState('—');
   const [limit, setLimit] = useState(50);
@@ -31,12 +34,18 @@ export default function DashboardScreen() {
       if (!snap.empty) {
         const data = snap.docs[0].data();
         setTemperature(data.temperature ?? null);
+        setLatitude(data.latitude ?? null);
+        setLongitude(data.longitude ?? null);
+        setSpeed(data.speed ?? null);
         setDeviceId(data.deviceId ?? 'unknown');
         setLastUpdated(new Date().toLocaleTimeString());
         setConnected(true);
       } else {
         setConnected(false);
       }
+    }, (err) => {
+      console.log('⚠️ readings listener error:', err.code);
+      setConnected(false);
     });
 
     return unsubscribe;
@@ -52,12 +61,16 @@ export default function DashboardScreen() {
       if (snap.exists()) {
         setLimit(snap.data().temperatureLimit ?? 50);
       }
+       }, (err) => {
+      console.log('⚠️ settings listener error:', err.code);
     });
 
     return unsubscribe;
   }, []);
 
   const isAbnormal = temperature !== null && temperature > limit;
+  const statusColor = temperature === null ? 'gray' : isAbnormal ? 'red' : 'green';
+  const hasLocation = latitude !== null && longitude !== null;
 
   return (
     <View style={styles.container}>
@@ -66,17 +79,38 @@ export default function DashboardScreen() {
         {connected ? '● Connected' : '● Waiting for data...'}
       </Text>
 
-      <View style={styles.tempCard}>
-        <Text style={styles.tempValue}>
-          {temperature !== null ? `${temperature}°C` : '—'}
-        </Text>
-        <Text style={[styles.tempStatus, { color: isAbnormal ? 'red' : 'green' }]}>
-          {temperature === null
-            ? '⏳ No data yet'
-            : isAbnormal
-            ? '🔴 ABNORMAL'
-            : '🟢 NORMAL'}
-        </Text>
+      <View style={styles.grid}>
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>🌡 Temperature</Text>
+          <Text style={styles.cardValue}>
+            {temperature !== null ? `${temperature} °C` : '—'}
+          </Text>
+        </View>
+
+        <Pressable
+          style={styles.card}
+          disabled={!hasLocation}
+          onPress={() =>
+            Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`)
+          }>
+          <Text style={styles.cardLabel}>📍 Location</Text>
+          <Text style={styles.cardValueSmall}>
+            {hasLocation ? `${latitude!.toFixed(6)},\n${longitude!.toFixed(6)}` : '—'}
+          </Text>
+          {hasLocation && <Text style={styles.cardHint}>Tap to open map</Text>}
+        </Pressable>
+
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>🚚 Speed</Text>
+          <Text style={styles.cardValue}>{speed !== null ? `${speed} km/h` : '—'}</Text>
+        </View>
+
+        <View style={[styles.card, { borderColor: statusColor }]}>
+          <Text style={styles.cardLabel}>{isAbnormal ? '🔴' : '🟢'} Status</Text>
+          <Text style={[styles.cardValue, { color: statusColor }]}>
+            {temperature === null ? 'NO DATA' : isAbnormal ? 'ABNORMAL' : 'NORMAL'}
+          </Text>
+        </View>
       </View>
 
       <Text style={styles.limitText}>Alert threshold: {limit}°C</Text>
@@ -94,16 +128,26 @@ const styles = StyleSheet.create({
   },
   deviceName: { fontSize: 18, fontWeight: '600', marginBottom: 4 },
   status: { fontSize: 14, marginBottom: 30 },
-  tempCard: {
-    alignItems: 'center',
-    padding: 40,
-    borderRadius: 20,
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    width: '100%',
+    backgroundColor: 'transparent',
+  },
+  card: {
+    width: '48%',
+    padding: 16,
+    marginBottom: 12,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: '#e91e63',
-    width: '100%',
+    minHeight: 110,
   },
-  tempValue: { fontSize: 64, fontWeight: 'bold' },
-  tempStatus: { fontSize: 20, fontWeight: '600', marginTop: 10 },
+  cardLabel: { fontSize: 14, opacity: 0.7, marginBottom: 8 },
+  cardValue: { fontSize: 24, fontWeight: 'bold' },
+  cardValueSmall: { fontSize: 15, fontWeight: '600' },
+  cardHint: { fontSize: 11, opacity: 0.5, marginTop: 6 },
   limitText: { marginTop: 20, fontSize: 14, opacity: 0.7 },
   lastUpdated: { marginTop: 10, opacity: 0.5, fontSize: 12 },
 });

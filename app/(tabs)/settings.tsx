@@ -5,7 +5,6 @@ import { Text, View } from '@/components/Themed';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { router } from 'expo-router';
 
 export default function SettingsScreen() {
   const [limit, setLimit] = useState('50');
@@ -53,8 +52,8 @@ export default function SettingsScreen() {
   };
 
   const handleLogout = async () => {
+    // Root layout's Stack.Protected switches back to login once auth state changes
     await signOut(auth);
-    router.replace('/login');
   };
 
   return (

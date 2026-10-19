@@ -37,6 +37,9 @@ export default function HistoryScreen() {
       }));
       setReadings(data);
       setLoading(false);
+       }, (err) => {
+      console.log('⚠️ history listener error:', err.code);
+      setLoading(false);
     });
 
     return unsubscribe;

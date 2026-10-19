@@ -4,7 +4,6 @@ import { StyleSheet, TextInput, Pressable, Alert, ActivityIndicator } from 'reac
 import { Text, View } from '@/components/Themed';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import { router } from 'expo-router';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -19,8 +18,8 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
+      // Root layout's Stack.Protected switches to the tabs once auth state changes
       await signInWithEmailAndPassword(auth, email, password);
-      router.replace('/(tabs)');
     } catch (error: any) {
       Alert.alert('Login Failed', error.message);
     } finally {

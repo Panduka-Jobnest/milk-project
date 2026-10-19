@@ -39,6 +39,9 @@ export default function AlertsScreen() {
       }));
       setAlerts(data);
       setLoading(false);
+       }, (err) => {
+      console.log('⚠️ alerts listener error:', err.code);
+      setLoading(false);
     });
 
     return unsubscribe;
