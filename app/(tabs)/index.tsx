@@ -1,7 +1,8 @@
 // app/(tabs)/index.tsx
 import { useState, useEffect } from 'react';
-import { StyleSheet, Pressable, Linking } from 'react-native';
+import { StyleSheet, ScrollView } from 'react-native';
 import { Text, View } from '@/components/Themed';
+import LocationMap from '@/components/LocationMap';
 import {
   collection,
   query,
@@ -73,7 +74,8 @@ export default function DashboardScreen() {
   const hasLocation = latitude !== null && longitude !== null;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.screen}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.deviceName}>📡 {deviceId}</Text>
       <Text style={[styles.status, { color: connected ? 'green' : 'gray' }]}>
         {connected ? '● Connected' : '● Waiting for data...'}
@@ -87,18 +89,12 @@ export default function DashboardScreen() {
           </Text>
         </View>
 
-        <Pressable
-          style={styles.card}
-          disabled={!hasLocation}
-          onPress={() =>
-            Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`)
-          }>
+        <View style={styles.card}>
           <Text style={styles.cardLabel}>📍 Location</Text>
           <Text style={styles.cardValueSmall}>
             {hasLocation ? `${latitude!.toFixed(6)},\n${longitude!.toFixed(6)}` : '—'}
           </Text>
-          {hasLocation && <Text style={styles.cardHint}>Tap to open map</Text>}
-        </Pressable>
+        </View>
 
         <View style={styles.card}>
           <Text style={styles.cardLabel}>🚚 Speed</Text>
@@ -113,18 +109,28 @@ export default function DashboardScreen() {
         </View>
       </View>
 
+      <View style={styles.mapCard}>
+        {hasLocation ? (
+          <LocationMap latitude={latitude!} longitude={longitude!} />
+        ) : (
+          <Text style={styles.mapPlaceholder}>📍 Waiting for location...</Text>
+        )}
+      </View>
+
       <Text style={styles.limitText}>Alert threshold: {limit}°C</Text>
       <Text style={styles.lastUpdated}>Last updated: {lastUpdated}</Text>
+    </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1 },
   container: {
-    flex: 1,
     alignItems: 'center',
     paddingTop: 40,
     paddingHorizontal: 20,
+    paddingBottom: 30,
   },
   deviceName: { fontSize: 18, fontWeight: '600', marginBottom: 4 },
   status: { fontSize: 14, marginBottom: 30 },
@@ -147,7 +153,17 @@ const styles = StyleSheet.create({
   cardLabel: { fontSize: 14, opacity: 0.7, marginBottom: 8 },
   cardValue: { fontSize: 24, fontWeight: 'bold' },
   cardValueSmall: { fontSize: 15, fontWeight: '600' },
-  cardHint: { fontSize: 11, opacity: 0.5, marginTop: 6 },
+  mapCard: {
+    width: '100%',
+    height: 250,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e91e63',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mapPlaceholder: { fontSize: 14, opacity: 0.6 },
   limitText: { marginTop: 20, fontSize: 14, opacity: 0.7 },
   lastUpdated: { marginTop: 10, opacity: 0.5, fontSize: 12 },
 });

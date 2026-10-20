@@ -17,6 +17,9 @@ type Reading = {
   status: string;
   deviceId: string;
   timestamp: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  speed?: number | null;
 };
 
 export default function HistoryScreen() {
@@ -72,11 +75,20 @@ export default function HistoryScreen() {
         renderItem={({ item }) => {
           const isAbnormal = item.status === 'ABNORMAL';
           const time = new Date(item.timestamp).toLocaleString();
+          const hasLocation = item.latitude != null && item.longitude != null;
 
           return (
             <View style={styles.row}>
               <View style={styles.rowLeft}>
                 <Text style={styles.temp}>{item.temperature}°C</Text>
+                <Text style={styles.detail}>
+                  🚚 {item.speed != null ? `${item.speed} km/h` : '—'}
+                </Text>
+                <Text style={styles.detail}>
+                  📍 {hasLocation
+                    ? `${item.latitude!.toFixed(6)}, ${item.longitude!.toFixed(6)}`
+                    : '—'}
+                </Text>
                 <Text style={styles.meta}>
                   {item.deviceId} · {time}
                 </Text>
@@ -132,6 +144,10 @@ const styles = StyleSheet.create({
   temp: {
     fontSize: 22,
     fontWeight: 'bold',
+  },
+  detail: {
+    fontSize: 13,
+    marginTop: 4,
   },
   meta: {
     fontSize: 12,
