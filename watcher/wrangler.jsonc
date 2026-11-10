@@ -1,0 +1,8 @@
+{
+  "name": "milk-alert-watcher",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  // Run every minute
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": { "enabled": true }
+}

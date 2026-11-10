@@ -39,3 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Cloudflare watcher
+watcher/.wrangler/
+watcher/.dev.vars
+watcher/*firebase-adminsdk*.json

@@ -1,0 +1,12 @@
+{
+  "name": "milk-alert-watcher",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "logs": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.151.3"
+  }
+}
