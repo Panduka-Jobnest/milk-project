@@ -30,6 +30,10 @@ export function useThemeColor(
   }
 }
 
+export function useTheme() {
+  return Colors[useColorScheme()];
+}
+
 export function Text(props: TextProps) {
   const { style, lightColor, darkColor, ...otherProps } = props;
   const color = useThemeColor({ light: lightColor, dark: darkColor }, 'text');

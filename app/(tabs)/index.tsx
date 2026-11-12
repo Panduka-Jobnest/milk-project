@@ -1,124 +1,123 @@
 // app/(tabs)/index.tsx
 import { useState, useEffect } from 'react';
 import { StyleSheet, ScrollView } from 'react-native';
-import { Text, View } from '@/components/Themed';
+import { Text, View, useTheme } from '@/components/Themed';
 import LocationMap from '@/components/LocationMap';
-import {
-  collection,
-  query,
-  orderBy,
-  limit as limitQuery,
-  onSnapshot,
-  doc,
-} from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase';
+import { checkReading, useThresholds } from '@/lib/thresholds';
+import { useContainers } from '@/lib/containers';
+import { useReadings } from '@/lib/readings';
+
+const OFFLINE_AFTER_MS = 2 * 60 * 1000; // the sensor reports every ~30 s
 
 export default function DashboardScreen() {
-  const [temperature, setTemperature] = useState<number | null>(null);
-  const [latitude, setLatitude] = useState<number | null>(null);
-  const [longitude, setLongitude] = useState<number | null>(null);
-  const [speed, setSpeed] = useState<number | null>(null);
-  const [deviceId, setDeviceId] = useState('—');
-  const [lastUpdated, setLastUpdated] = useState('—');
-  const [limit, setLimit] = useState(50);
-  const [connected, setConnected] = useState(false);
+  const theme = useTheme();
+  const { selected } = useContainers();
+  const [now, setNow] = useState(Date.now());
 
-  // 1. Listen to latest reading from Firestore (live)
+  // 1. Latest reading of the selected container (live)
+  const { readings } = useReadings({ container: selected, max: 1 });
+  const latest = readings[0];
+  const temperature = latest?.temperature ?? null;
+  const ph = latest?.ph ?? null;
+  const latitude = latest?.latitude ?? null;
+  const longitude = latest?.longitude ?? null;
+  const speed = latest?.speed ?? null;
+  const deviceId = latest?.deviceId ?? '—';
+  const readingTime = latest ? new Date(latest.timestamp).getTime() : null;
+  const lastUpdated = readingTime ? new Date(readingTime).toLocaleTimeString() : '—';
+  const connected = readingTime !== null && now - readingTime < OFFLINE_AFTER_MS;
+
+  // Re-check "connected" as time passes, even when no new reading arrives
   useEffect(() => {
-    const q = query(
-      collection(db, 'readings'),
-      orderBy('timestamp', 'desc'),
-      limitQuery(1)
-    );
-
-    const unsubscribe = onSnapshot(q, (snap) => {
-      if (!snap.empty) {
-        const data = snap.docs[0].data();
-        setTemperature(data.temperature ?? null);
-        setLatitude(data.latitude ?? null);
-        setLongitude(data.longitude ?? null);
-        setSpeed(data.speed ?? null);
-        setDeviceId(data.deviceId ?? 'unknown');
-        setLastUpdated(new Date().toLocaleTimeString());
-        setConnected(true);
-      } else {
-        setConnected(false);
-      }
-    }, (err) => {
-      console.log('⚠️ readings listener error:', err.code);
-      setConnected(false);
-    });
-
-    return unsubscribe;
+    const timer = setInterval(() => setNow(Date.now()), 15 * 1000);
+    return () => clearInterval(timer);
   }, []);
 
-  // 2. Listen to user's threshold setting (live)
-  useEffect(() => {
-    const user = auth.currentUser;
-    if (!user) return;
-
-    const ref = doc(db, 'settings', user.uid);
-    const unsubscribe = onSnapshot(ref, (snap) => {
-      if (snap.exists()) {
-        setLimit(snap.data().temperatureLimit ?? 50);
-      }
-       }, (err) => {
-      console.log('⚠️ settings listener error:', err.code);
-    });
-
-    return unsubscribe;
-  }, []);
-
-  const isAbnormal = temperature !== null && temperature > limit;
-  const statusColor = temperature === null ? 'gray' : isAbnormal ? 'red' : 'green';
+  // 2. User's thresholds from Settings decide what counts as abnormal
+  const { tempLimit: limit, phMin, phMax } = useThresholds();
+  const { tempHigh: tempAbnormal, phBad: phAbnormal, abnormal: isAbnormal } = checkReading({ temperature, ph }, { tempLimit: limit, phMin, phMax });
+  const noData = temperature === null && ph === null;
+  const statusColor = noData ? theme.textMuted : isAbnormal ? theme.danger : theme.success;
+  const statusBg = noData ? theme.card : isAbnormal ? theme.dangerSoft : theme.successSoft;
+  const statusReason = tempAbnormal && phAbnormal ? 'Temp & pH' : tempAbnormal ? 'High temperature' : phAbnormal ? 'pH out of range' : '';
+  const cardStyle = [styles.card, { backgroundColor: theme.card, borderColor: theme.border }];
   const hasLocation = latitude !== null && longitude !== null;
+  const phLabel = ph === null ? '' : ph < phMin ? 'Acidic' : ph > phMax ? 'Alkaline' : 'Fresh';
+  const phColor = ph === null ? theme.text : phLabel === 'Fresh' ? theme.success : theme.danger;
 
   return (
     <View style={styles.screen}>
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.deviceName}>📡 {deviceId}</Text>
-      <Text style={[styles.status, { color: connected ? 'green' : 'gray' }]}>
-        {connected ? '● Connected' : '● Waiting for data...'}
-      </Text>
+      <Text style={styles.deviceName}>📦 {selected ?? 'All containers'}</Text>
+      <Text style={[styles.deviceIdText, { color: theme.textMuted }]}>📡 {deviceId}</Text>
+      <View
+        style={[
+          styles.statusPill,
+          { backgroundColor: connected ? theme.successSoft : theme.primarySoft },
+        ]}
+      >
+        <Text style={[styles.status, { color: connected ? theme.success : theme.textMuted }]}>
+          {connected ? '● Connected' : readingTime ? `● Offline · last seen ${lastUpdated}` : '● Waiting for data...'}
+        </Text>
+      </View>
 
       <View style={styles.grid}>
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>🌡 Temperature</Text>
-          <Text style={styles.cardValue}>
+        <View style={cardStyle}>
+          <Text style={[styles.cardLabel, { color: theme.textMuted }]}>🌡 Temperature</Text>
+          <Text style={[styles.cardValue, { color: theme.tint }]}>
             {temperature !== null ? `${temperature} °C` : '—'}
           </Text>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>📍 Location</Text>
-          <Text style={styles.cardValueSmall}>
-            {hasLocation ? `${latitude!.toFixed(6)},\n${longitude!.toFixed(6)}` : '—'}
+        <View style={cardStyle}>
+          <Text style={[styles.cardLabel, { color: theme.textMuted }]}>🧪 pH</Text>
+          <Text style={[styles.cardValue, { color: phColor }]}>
+            {ph !== null ? ph.toFixed(2) : '—'}
           </Text>
+          {ph !== null && (
+            <Text style={[styles.cardHint, { color: phColor }]}>
+              {phLabel} · normal {phMin}–{phMax}
+            </Text>
+          )}
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>🚚 Speed</Text>
+        <View style={cardStyle}>
+          <Text style={[styles.cardLabel, { color: theme.textMuted }]}>🚚 Speed</Text>
           <Text style={styles.cardValue}>{speed !== null ? `${speed} km/h` : '—'}</Text>
         </View>
 
-        <View style={[styles.card, { borderColor: statusColor }]}>
-          <Text style={styles.cardLabel}>{isAbnormal ? '🔴' : '🟢'} Status</Text>
+        <View style={[styles.card, { backgroundColor: statusBg, borderColor: statusColor }]}>
+          <Text style={[styles.cardLabel, { color: theme.textMuted }]}>{isAbnormal ? '🔴' : '🟢'} Status</Text>
           <Text style={[styles.cardValue, { color: statusColor }]}>
-            {temperature === null ? 'NO DATA' : isAbnormal ? 'ABNORMAL' : 'NORMAL'}
+            {noData ? 'NO DATA' : isAbnormal ? 'ABNORMAL' : 'NORMAL'}
+          </Text>
+          {statusReason !== '' && (
+            <Text style={[styles.cardHint, { color: statusColor }]}>{statusReason}</Text>
+          )}
+        </View>
+
+        <View style={[cardStyle, styles.cardWide]}>
+          <Text style={[styles.cardLabel, { color: theme.textMuted }]}>📍 Location</Text>
+          <Text style={styles.cardValueSmall}>
+            {hasLocation ? `${latitude!.toFixed(6)}, ${longitude!.toFixed(6)}` : '—'}
           </Text>
         </View>
       </View>
 
-      <View style={styles.mapCard}>
+      <View style={[styles.mapCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
         {hasLocation ? (
           <LocationMap latitude={latitude!} longitude={longitude!} />
         ) : (
-          <Text style={styles.mapPlaceholder}>📍 Waiting for location...</Text>
+          <Text style={[styles.mapPlaceholder, { color: theme.textMuted }]}>📍 Waiting for location...</Text>
         )}
       </View>
 
-      <Text style={styles.limitText}>Alert threshold: {limit}°C</Text>
-      <Text style={styles.lastUpdated}>Last updated: {lastUpdated}</Text>
+      <Text style={[styles.limitText, { color: theme.textMuted }]}>
+        Alert threshold: <Text style={{ color: theme.tint, fontWeight: '700' }}>{limit}°C</Text>
+        {'  ·  '}Normal pH:{' '}
+        <Text style={{ color: theme.tint, fontWeight: '700' }}>{phMin}–{phMax}</Text>
+      </Text>
+      <Text style={[styles.lastUpdated, { color: theme.textMuted }]}>Last updated: {lastUpdated}</Text>
     </ScrollView>
     </View>
   );
@@ -132,8 +131,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 30,
   },
-  deviceName: { fontSize: 18, fontWeight: '600', marginBottom: 4 },
-  status: { fontSize: 14, marginBottom: 30 },
+  deviceName: { fontSize: 20, fontWeight: '800' },
+  deviceIdText: { fontSize: 13, marginTop: 2, marginBottom: 10 },
+  statusPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 999,
+    marginBottom: 26,
+  },
+  status: { fontSize: 13, fontWeight: '600' },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -146,24 +152,24 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 12,
     borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#e91e63',
+    borderWidth: 1.5,
     minHeight: 110,
   },
-  cardLabel: { fontSize: 14, opacity: 0.7, marginBottom: 8 },
+  cardLabel: { fontSize: 13, fontWeight: '600', marginBottom: 8 },
   cardValue: { fontSize: 24, fontWeight: 'bold' },
   cardValueSmall: { fontSize: 15, fontWeight: '600' },
+  cardHint: { fontSize: 12, fontWeight: '600', marginTop: 4 },
+  cardWide: { width: '100%', minHeight: 0 },
   mapCard: {
     width: '100%',
     height: 250,
     borderRadius: 16,
-    borderWidth: 2,
-    borderColor: '#e91e63',
+    borderWidth: 1.5,
     overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  mapPlaceholder: { fontSize: 14, opacity: 0.6 },
-  limitText: { marginTop: 20, fontSize: 14, opacity: 0.7 },
-  lastUpdated: { marginTop: 10, opacity: 0.5, fontSize: 12 },
+  mapPlaceholder: { fontSize: 14 },
+  limitText: { marginTop: 20, fontSize: 14 },
+  lastUpdated: { marginTop: 8, fontSize: 12 },
 });

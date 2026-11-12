@@ -1,56 +1,25 @@
 // app/(tabs)/alerts.tsx
-import { useState, useEffect } from 'react';
 import { StyleSheet, FlatList, ActivityIndicator } from 'react-native';
-import { Text, View } from '@/components/Themed';
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-
-type Alert = {
-  id: string;
-  temperature: number;
-  status: string;
-  deviceId: string;
-  timestamp: string;
-};
+import { Text, View, useTheme } from '@/components/Themed';
+import { checkReading, useThresholds } from '@/lib/thresholds';
+import { useContainers } from '@/lib/containers';
+import { useReadings } from '@/lib/readings';
 
 export default function AlertsScreen() {
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [loading, setLoading] = useState(true);
+  const theme = useTheme();
+  const { selected } = useContainers();
+  const thresholds = useThresholds();
+  const { tempLimit, phMin, phMax } = thresholds;
 
-  useEffect(() => {
-    const q = query(
-      collection(db, 'readings'),
-      where('status', '==', 'ABNORMAL'),   // ← filter only abnormal
-      orderBy('timestamp', 'desc'),
-      limit(50)
-    );
+  // Recent readings of the selected container; abnormal ones are picked using the user's thresholds
+  const { readings, loading } = useReadings({ container: selected, max: 200 });
 
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const data = snap.docs.map((doc) => ({
-        id: doc.id,
-        ...(doc.data() as Omit<Alert, 'id'>),
-      }));
-      setAlerts(data);
-      setLoading(false);
-       }, (err) => {
-      console.log('⚠️ alerts listener error:', err.code);
-      setLoading(false);
-    });
-
-    return unsubscribe;
-  }, []);
+  const alerts = readings.filter((r) => checkReading(r, thresholds).abnormal);
 
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color={theme.tint} />
       </View>
     );
   }
@@ -58,9 +27,9 @@ export default function AlertsScreen() {
   if (alerts.length === 0) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyTitle}>🎉 No alerts</Text>
-        <Text style={styles.emptyHint}>
-          Everything is running normally
+        <Text style={[styles.emptyTitle, { color: theme.success }]}>🎉 No alerts</Text>
+        <Text style={[styles.emptyHint, { color: theme.textMuted }]}>
+          {selected ?? 'Everything'} is running normally
         </Text>
       </View>
     );
@@ -73,23 +42,58 @@ export default function AlertsScreen() {
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => {
           const time = new Date(item.timestamp).toLocaleString();
+          const hasPh = item.ph != null;
+          const { tempHigh, phLow, phHigh, phBad } = checkReading(item, thresholds);
+
+          const title =
+            tempHigh && phBad ? 'High Temperature & pH'
+            : tempHigh ? 'High Temperature'
+            : phLow ? 'pH Too Acidic'
+            : phHigh ? 'pH Too Alkaline'
+            : 'Abnormal Reading';
+          const icon = phBad && !tempHigh ? '🧪' : '⚠️';
 
           return (
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.alertIcon}>⚠️</Text>
-                <Text style={styles.alertTitle}>High Temperature</Text>
+            <View
+              style={[
+                styles.card,
+                { backgroundColor: theme.dangerSoft, borderLeftColor: theme.danger },
+              ]}
+            >
+              <View style={[styles.cardHeader, { backgroundColor: 'transparent' }]}>
+                <Text style={styles.alertIcon}>{icon}</Text>
+                <Text style={[styles.alertTitle, { color: theme.danger }]}>{title}</Text>
               </View>
 
-              <Text style={styles.temp}>{item.temperature}°C</Text>
+              <View style={[styles.values, { backgroundColor: 'transparent' }]}>
+                <View style={[styles.valueBlock, { backgroundColor: 'transparent' }]}>
+                  <Text style={[styles.valueLabel, { color: theme.textMuted }]}>🌡 Temp</Text>
+                  <Text style={[styles.temp, { color: tempHigh ? theme.danger : theme.text }]}>
+                    {item.temperature}°C
+                  </Text>
+                </View>
+                {hasPh && (
+                  <View style={[styles.valueBlock, { backgroundColor: 'transparent' }]}>
+                    <Text style={[styles.valueLabel, { color: theme.textMuted }]}>🧪 pH</Text>
+                    <Text style={[styles.temp, { color: phBad ? theme.danger : theme.text }]}>
+                      {item.ph!.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+              </View>
 
-              <Text style={styles.meta}>
+              <Text style={[styles.limits, { color: theme.textMuted }]}>
+                Limit {tempLimit}°C · normal pH {phMin}–{phMax}
+              </Text>
+
+              <Text style={[styles.meta, { color: theme.textMuted }]}>
                 {item.deviceId} · {time}
               </Text>
             </View>
           );
         }}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
+        contentContainerStyle={styles.listContent}
       />
     </View>
   );
@@ -114,11 +118,15 @@ const styles = StyleSheet.create({
   },
   emptyHint: {
     fontSize: 14,
-    opacity: 0.6,
     textAlign: 'center',
   },
+  listContent: {
+    paddingBottom: 24,
+  },
   card: {
-    paddingVertical: 14,
+    padding: 14,
+    borderRadius: 14,
+    borderLeftWidth: 4,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -131,22 +139,34 @@ const styles = StyleSheet.create({
   },
   alertTitle: {
     fontSize: 16,
+    fontWeight: '700',
+  },
+  values: {
+    flexDirection: 'row',
+    marginTop: 6,
+  },
+  valueBlock: {
+    marginRight: 28,
+  },
+  valueLabel: {
+    fontSize: 12,
     fontWeight: '600',
-    color: 'red',
   },
   temp: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: 'bold',
-    color: 'red',
+    marginTop: 2,
+  },
+  limits: {
+    fontSize: 12,
     marginTop: 6,
   },
   meta: {
     fontSize: 12,
-    opacity: 0.6,
     marginTop: 4,
   },
   separator: {
-    height: 1,
-    backgroundColor: 'rgba(128,128,128,0.2)',
+    height: 10,
+    backgroundColor: 'transparent',
   },
 });

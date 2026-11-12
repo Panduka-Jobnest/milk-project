@@ -1,10 +1,16 @@
 // watcher/src/index.js
-// Cloudflare Worker that runs every minute (cron), checks the latest reading in
-// Firestore and sends an Expo push to every user whose temperature limit is exceeded.
+// Cloudflare Worker that runs every minute (cron). For every container it checks the latest
+// reading in Firestore and sends an Expo push to each user whose temperature limit is exceeded
+// or whose normal pH range is left.
+// A reading's container is its "container" field, or its deviceId for older readings.
 // Uses only the Firestore REST API, so Firebase can stay on the free Spark plan.
 
-const COOLDOWN_MS = 10 * 60 * 1000; // at most one alert per user every 10 minutes
-const DEFAULT_LIMIT = 50; // same default as the app's Settings screen
+const COOLDOWN_MS = 10 * 60 * 1000; // at most one alert per user, container and check type every 10 minutes
+const LOOKBACK_MS = 10 * 60 * 1000; // containers that sent nothing in this window are skipped
+// Same defaults as the app (constants/Thresholds.ts)
+const DEFAULT_LIMIT = 50;
+const DEFAULT_PH_MIN = 6.4;
+const DEFAULT_PH_MAX = 6.8;
 
 export default {
   async scheduled(event, env, ctx) {
@@ -16,52 +22,99 @@ async function checkReadings(env) {
   const sa = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
   const fs = firestore(sa.project_id, await getAccessToken(sa));
 
-  const latest = await fs.latestReading();
-  if (!latest) return console.log('No readings yet');
+  const latestByContainer = await fs.latestReadingPerContainer(new Date(Date.now() - LOOKBACK_MS).toISOString());
+  if (latestByContainer.size === 0) return console.log('No recent readings');
 
-  // state = { lastReading: <timestamp of last processed reading>, lastAlert: { uid: ms } }
-  const state = (await fs.getState()) ?? { lastReading: null, lastAlert: {} };
-  const readingKey = JSON.stringify(latest.timestamp ?? latest.id);
-  if (state.lastReading === readingKey) return console.log('No new reading');
-  state.lastReading = readingKey;
-
-  const temperature = Number(latest.temperature);
-  const now = Date.now();
-  const limits = await fs.temperatureLimits();
-  const toAlert = [];
-
-  for (const [uid, limit] of Object.entries(limits)) {
-    const sinceLast = now - (state.lastAlert[uid] ?? 0);
-    if (!(temperature > limit)) {
-      console.log(`${uid}: ${temperature}°C <= limit ${limit}°C, normal`);
-      delete state.lastAlert[uid]; // back to normal: alert straight away next time
-    } else if (sinceLast > COOLDOWN_MS) {
-      toAlert.push({ uid, limit });
-    } else {
-      console.log(`${uid}: over limit ${limit}°C, cooldown (last alert ${Math.round(sinceLast / 60000)} min ago)`);
-    }
+  // state = { lastReading: { container: <timestamp of last processed reading> },
+  //           lastAlert: { "uid:container:temp" | "uid:container:ph": ms } }
+  let state = (await fs.getState()) ?? {};
+  if (typeof state.lastReading !== 'object' || state.lastReading === null) {
+    state = { lastReading: {}, lastAlert: {} }; // older single-device state format
   }
-  if (Object.keys(limits).length === 0) console.log('No users found in Firestore "users"/"settings"');
 
-  if (toAlert.length > 0) {
+  const users = await fs.userConfigs();
+  if (Object.keys(users).length === 0) console.log('No users found in Firestore "users"/"settings"');
+  const now = Date.now();
+  const toAlert = new Map(); // uid -> [{ container, deviceId, issues }]
+
+  for (const [container, reading] of latestByContainer) {
+    const deviceId = reading.deviceId ?? 'unknown';
+    const readingKey = JSON.stringify(reading.timestamp ?? reading.id);
+    if (state.lastReading[container] === readingKey) {
+      console.log(`${container}: no new reading`);
+      continue;
+    }
+    state.lastReading[container] = readingKey;
+
+    const temperature = Number(reading.temperature);
+    const ph = reading.ph == null ? null : Number(reading.ph); // older devices may not send pH
+
+    for (const [uid, u] of Object.entries(users)) {
+      const issues = [];
+
+      const tempKey = `${uid}:${container}:temp`;
+      if (!(temperature > u.limit)) {
+        delete state.lastAlert[tempKey]; // back to normal: alert straight away next time
+      } else if (now - (state.lastAlert[tempKey] ?? 0) > COOLDOWN_MS) {
+        issues.push({ kind: 'temp', text: `Temperature is ${temperature.toFixed(1)}°C (limit ${u.limit}°C)` });
+      } else {
+        console.log(`${uid}/${container}: over limit ${u.limit}°C, cooldown`);
+      }
+
+      const phKey = `${uid}:${container}:ph`;
+      if (ph === null || Number.isNaN(ph)) {
+        // no pH in this reading, nothing to check
+      } else if (ph >= u.phMin && ph <= u.phMax) {
+        delete state.lastAlert[phKey];
+      } else if (now - (state.lastAlert[phKey] ?? 0) > COOLDOWN_MS) {
+        const why = ph < u.phMin ? `too acidic, below ${u.phMin}` : `too alkaline, above ${u.phMax}`;
+        issues.push({ kind: 'ph', text: `pH is ${ph.toFixed(2)} (${why})` });
+      } else {
+        console.log(`${uid}/${container}: pH ${ph} out of range, cooldown`);
+      }
+
+      if (issues.length > 0) {
+        if (!toAlert.has(uid)) toAlert.set(uid, []);
+        toAlert.get(uid).push({ container, deviceId, issues });
+      }
+    }
+    console.log(`${container}: ${temperature}°C, pH ${ph ?? '—'} checked`);
+  }
+
+  if (toAlert.size > 0) {
     const tokens = await fs.pushTokens();
-    for (const { uid } of toAlert) if (!tokens[uid]) console.log(`${uid}: no pushToken saved, skipped`);
-    const messages = toAlert
-      .filter(({ uid }) => tokens[uid])
-      .map(({ uid, limit }) => ({
-        to: tokens[uid],
-        title: '🚨 Milk temperature alert',
-        body: `Temperature is ${temperature.toFixed(1)}°C (limit ${limit}°C) on ${latest.deviceId ?? 'device'}`,
-        sound: 'default',
-        channelId: 'default',
-        priority: 'high',
-      }));
+    const messages = [];
+    for (const [uid, alerts] of toAlert) {
+      if (!tokens[uid]) {
+        console.log(`${uid}: no pushToken saved, skipped`);
+        continue;
+      }
+      for (const { container, deviceId, issues } of alerts) {
+        messages.push({
+          to: tokens[uid],
+          title: `${alertTitle(issues)} · ${container}`,
+          body: `${issues.map((i) => i.text).join('\n')}\n${container === deviceId ? container : `${container} (${deviceId})`}`,
+          sound: 'default',
+          channelId: 'default',
+          priority: 'high',
+        });
+      }
+    }
     if (messages.length > 0) await sendPush(messages);
-    for (const { uid } of toAlert) state.lastAlert[uid] = now;
+    for (const [uid, alerts] of toAlert) {
+      for (const { container, issues } of alerts) {
+        for (const { kind } of issues) state.lastAlert[`${uid}:${container}:${kind}`] = now;
+      }
+    }
   }
 
   await fs.setState(state);
-  console.log(`Reading ${temperature}°C checked, ${toAlert.length} alert(s)`);
+  console.log(`${latestByContainer.size} container(s) checked, ${[...toAlert.values()].flat().length} alert(s)`);
+}
+
+function alertTitle(issues) {
+  if (issues.length > 1) return '🚨 Milk quality alert';
+  return issues[0].kind === 'ph' ? '🧪 Milk pH alert' : '🚨 Milk temperature alert';
 }
 
 async function sendPush(messages) {
@@ -94,27 +147,46 @@ function firestore(projectId, accessToken) {
   }
 
   return {
-    async latestReading() {
+    // Newest reading of each container that reported since `sinceIso`
+    async latestReadingPerContainer(sinceIso) {
       const rows = await call(':runQuery', {
         method: 'POST',
         body: JSON.stringify({
           structuredQuery: {
             from: [{ collectionId: 'readings' }],
+            where: {
+              fieldFilter: { field: { fieldPath: 'timestamp' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: sinceIso } },
+            },
             orderBy: [{ field: { fieldPath: 'timestamp' }, direction: 'DESCENDING' }],
-            limit: 1,
+            limit: 1000,
           },
         }),
       });
-      const doc = rows?.find((r) => r.document)?.document;
-      return doc ? { id: doc.name.split('/').pop(), ...decodeFields(doc.fields) } : null;
+      const latest = new Map();
+      for (const r of rows ?? []) {
+        if (!r.document) continue;
+        const doc = { id: r.document.name.split('/').pop(), ...decodeFields(r.document.fields) };
+        const container = doc.container || doc.deviceId || 'unknown';
+        if (!latest.has(container)) latest.set(container, doc); // rows are newest first
+      }
+      return latest;
     },
 
-    async temperatureLimits() {
-      const limits = {};
-      for (const s of await listAll('settings')) limits[s.id] = Number(s.temperatureLimit ?? DEFAULT_LIMIT);
-      // Users who never opened Settings still get the default limit.
-      for (const u of await listAll('users')) limits[u.id] ??= DEFAULT_LIMIT;
-      return limits;
+    // Per user: thresholds (settings/{uid})
+    async userConfigs() {
+      const all = {};
+      for (const s of await listAll('settings')) {
+        all[s.id] = {
+          limit: Number(s.temperatureLimit ?? DEFAULT_LIMIT),
+          phMin: Number(s.phMin ?? DEFAULT_PH_MIN),
+          phMax: Number(s.phMax ?? DEFAULT_PH_MAX),
+        };
+      }
+      // Users who never opened Settings still get the defaults.
+      for (const u of await listAll('users')) {
+        all[u.id] ??= { limit: DEFAULT_LIMIT, phMin: DEFAULT_PH_MIN, phMax: DEFAULT_PH_MAX };
+      }
+      return all;
     },
 
     async pushTokens() {

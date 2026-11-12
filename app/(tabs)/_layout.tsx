@@ -3,15 +3,22 @@ import { SymbolView } from 'expo-symbols';
 import { Tabs } from 'expo-router';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import ContainerPicker from '@/components/ContainerPicker';
+import { ContainersProvider } from '@/lib/containers';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
 
   return (
+    <ContainersProvider>
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
+        tabBarActiveTintColor: Colors[colorScheme].tabIconSelected,
+        tabBarInactiveTintColor: Colors[colorScheme].tabIconDefault,
+        tabBarLabelStyle: { fontWeight: '600' },
+        headerTitleStyle: { fontWeight: '700' },
         headerShown: true,
+        headerRight: () => <ContainerPicker />,
       }}>
       <Tabs.Screen
         name="index"
@@ -66,5 +73,6 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+    </ContainersProvider>
   );
 }

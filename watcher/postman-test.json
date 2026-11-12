@@ -1,18 +1,37 @@
 {
   "info": {
     "name": "Milk Alert Watcher Test",
-    "description": "1) Send a push straight to your phone (checks token + FCM).\n2) Sign in with your app account.\n3) Add a high-temperature reading; the Cloudflare Worker should notify you within ~1 minute.\n4) Delete the test reading.\n\nFill in the collection variables pushToken, email and password first.",
+    "description": "1) Send a push straight to your phone (checks token + FCM).\n2) Sign in with your app account (saves idToken automatically).\n3) Send one of the test readings (3a–3f). No status needed: the app and Worker decide NORMAL/ABNORMAL from each user's Settings thresholds. The app updates instantly; the Cloudflare Worker should notify you within ~1 minute.\n4) Delete the last test reading.\n\nFill in the collection variables pushToken, email and password first. Set container to the container you want to test (e.g. Container 001 or Container 002) and deviceId to the sensor sending it.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "pushToken", "value": "ExponentPushToken[PASTE_FROM_FIRESTORE_users]" },
     { "key": "email", "value": "your-app-login@example.com" },
     { "key": "password", "value": "" },
-    { "key": "testTemperature", "value": "99" },
+    { "key": "container", "value": "Container 001" },
+    { "key": "deviceId", "value": "milk-container-01" },
+    { "key": "testTemperature", "value": "20" },
+    { "key": "testPh", "value": "3" },
     { "key": "apiKey", "value": "AIzaSyAZd82KkF8RSzWLvrN1L5yz4msuD76XRpU" },
     { "key": "projectId", "value": "temp-app-a3984" },
     { "key": "idToken", "value": "" },
     { "key": "readingPath", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Remember the last reading created by any '3x' request so '4. Delete' can remove it",
+          "if (pm.request.method === 'POST' && pm.request.url.toString().includes('/documents/readings')) {",
+          "  const res = pm.response.json();",
+          "  pm.test('Reading saved', () => pm.expect(res.name).to.be.a('string'));",
+          "  pm.collectionVariables.set('readingPath', res.name);",
+          "}"
+        ]
+      }
+    }
   ],
   "item": [
     {
@@ -53,20 +72,7 @@
       }
     },
     {
-      "name": "3. Add high-temperature reading (triggers Worker)",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "const res = pm.response.json();",
-              "pm.test('Reading saved', () => pm.expect(res.name).to.be.a('string'));",
-              "pm.collectionVariables.set('readingPath', res.name);"
-            ]
-          }
-        }
-      ],
+      "name": "3a. Normal reading (4°C, pH 6.6) – no alert",
       "request": {
         "method": "POST",
         "header": [
@@ -76,12 +82,87 @@
         "url": "https://firestore.googleapis.com/v1/projects/{{projectId}}/databases/(default)/documents/readings",
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": {{testTemperature}} },\n    \"status\": { \"stringValue\": \"ABNORMAL\" },\n    \"deviceId\": { \"stringValue\": \"POSTMAN-TEST\" },\n    \"timestamp\": { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
+          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": 4 },\n    \"ph\":          { \"doubleValue\": 6.6 },\n    \"container\":   { \"stringValue\": \"{{container}}\" },\n    \"deviceId\":    { \"stringValue\": \"{{deviceId}}\" },\n    \"latitude\":    { \"doubleValue\": 6.9271 },\n    \"longitude\":   { \"doubleValue\": 79.8612 },\n    \"speed\":       { \"doubleValue\": 40 },\n    \"timestamp\":   { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
         }
       }
     },
     {
-      "name": "4. Delete test reading",
+      "name": "3b. pH too acidic (4°C, pH 6.1) – pH alert",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{idToken}}" }
+        ],
+        "url": "https://firestore.googleapis.com/v1/projects/{{projectId}}/databases/(default)/documents/readings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": 4 },\n    \"ph\":          { \"doubleValue\": 6.1 },\n    \"container\":   { \"stringValue\": \"{{container}}\" },\n    \"deviceId\":    { \"stringValue\": \"{{deviceId}}\" },\n    \"latitude\":    { \"doubleValue\": 6.9271 },\n    \"longitude\":   { \"doubleValue\": 79.8612 },\n    \"speed\":       { \"doubleValue\": 40 },\n    \"timestamp\":   { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
+        }
+      }
+    },
+    {
+      "name": "3c. pH too alkaline (4°C, pH 7.3) – pH alert",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{idToken}}" }
+        ],
+        "url": "https://firestore.googleapis.com/v1/projects/{{projectId}}/databases/(default)/documents/readings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": 4 },\n    \"ph\":          { \"doubleValue\": 7.3 },\n    \"container\":   { \"stringValue\": \"{{container}}\" },\n    \"deviceId\":    { \"stringValue\": \"{{deviceId}}\" },\n    \"latitude\":    { \"doubleValue\": 6.9271 },\n    \"longitude\":   { \"doubleValue\": 79.8612 },\n    \"speed\":       { \"doubleValue\": 40 },\n    \"timestamp\":   { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
+        }
+      }
+    },
+    {
+      "name": "3d. High temperature (60°C, pH 6.6) – temperature alert",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{idToken}}" }
+        ],
+        "url": "https://firestore.googleapis.com/v1/projects/{{projectId}}/databases/(default)/documents/readings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": 60 },\n    \"ph\":          { \"doubleValue\": 6.6 },\n    \"container\":   { \"stringValue\": \"{{container}}\" },\n    \"deviceId\":    { \"stringValue\": \"{{deviceId}}\" },\n    \"latitude\":    { \"doubleValue\": 6.9271 },\n    \"longitude\":   { \"doubleValue\": 79.8612 },\n    \"speed\":       { \"doubleValue\": 40 },\n    \"timestamp\":   { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
+        }
+      }
+    },
+    {
+      "name": "3e. Both bad (60°C, pH 3) – combined alert",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{idToken}}" }
+        ],
+        "url": "https://firestore.googleapis.com/v1/projects/{{projectId}}/databases/(default)/documents/readings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": 60 },\n    \"ph\":          { \"doubleValue\": 3 },\n    \"container\":   { \"stringValue\": \"{{container}}\" },\n    \"deviceId\":    { \"stringValue\": \"{{deviceId}}\" },\n    \"latitude\":    { \"doubleValue\": 6.9271 },\n    \"longitude\":   { \"doubleValue\": 79.8612 },\n    \"speed\":       { \"doubleValue\": 40 },\n    \"timestamp\":   { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
+        }
+      }
+    },
+    {
+      "name": "3f. Custom reading (uses testTemperature / testPh variables)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{idToken}}" }
+        ],
+        "url": "https://firestore.googleapis.com/v1/projects/{{projectId}}/databases/(default)/documents/readings",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fields\": {\n    \"temperature\": { \"doubleValue\": {{testTemperature}} },\n    \"ph\":          { \"doubleValue\": {{testPh}} },\n    \"container\":   { \"stringValue\": \"{{container}}\" },\n    \"deviceId\":    { \"stringValue\": \"{{deviceId}}\" },\n    \"latitude\":    { \"doubleValue\": 6.9271 },\n    \"longitude\":   { \"doubleValue\": 79.8612 },\n    \"speed\":       { \"doubleValue\": 40 },\n    \"timestamp\":   { \"stringValue\": \"{{$isoTimestamp}}\" }\n  }\n}"
+        }
+      }
+    },
+    {
+      "name": "4. Delete last test reading",
       "request": {
         "method": "DELETE",
         "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],

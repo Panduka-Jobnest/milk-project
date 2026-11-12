@@ -43,7 +43,7 @@ export async function registerForPushNotifications(): Promise<string | null> {
       name: 'Temperature Alerts',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#FF231F7C',
+      lightColor: '#0192F6',
       //sound: 'default',
     });
   }
